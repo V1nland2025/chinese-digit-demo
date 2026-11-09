@@ -3,6 +3,7 @@ const $ = id => document.getElementById(id);
 const names = ['一','二','三','四','五','六','七','八','九','十'];
 const source = $('source'), scan = $('scan'), input = $('input'), video = $('video');
 let stream = null, session = null, hasImage = false;
+const baseFrame=document.createElement('canvas'); baseFrame.width=baseFrame.height=512;
 const status = text => $('status').textContent = text;
 function stopCamera() { if (stream) stream.getTracks().forEach(t => t.stop()); stream = null; video.srcObject = null; $('capture').disabled = true; $('cameraHint').style.display = 'grid'; }
 window.addEventListener('pagehide', stopCamera);
@@ -19,13 +20,28 @@ function cropSquare(image, width, height) {
   if (!width || !height) throw new Error('图像尚未准备好');
   const side = Math.min(width, height), x = (width-side)/2, y = (height-side)/2;
   const ctx = source.getContext('2d'); ctx.clearRect(0,0,512,512); ctx.drawImage(image,x,y,side,side,0,0,512,512);
-  hasImage = true; processImage(); $('result').textContent = '图像已就绪'; $('scores').textContent = ''; $('predict').disabled = !session;
+  rememberFrame(); $('predict').disabled = !session;
 }
 function fitSquare(image, width, height) {
   if (!width || !height) throw new Error('图像尚未准备好');
   const scale=512/Math.max(width,height), w=width*scale, h=height*scale;
   const ctx=source.getContext('2d');ctx.clearRect(0,0,512,512);ctx.drawImage(image,(512-w)/2,(512-h)/2,w,h);
-  hasImage=true;processImage();$('predict').disabled=!session;
+  rememberFrame();$('predict').disabled=!session;
+}
+function rememberFrame() {
+  const ctx=baseFrame.getContext('2d');ctx.clearRect(0,0,512,512);ctx.drawImage(source,0,0);
+  hasImage=true;resetFrame();
+}
+function resetFrame() {
+  $('zoom').value='1';$('positionX').value='50';$('positionY').value='50';applyFrame();
+}
+function applyFrame() {
+  $('zoomValue').textContent=Number($('zoom').value).toFixed(2);$('positionXValue').textContent=$('positionX').value;$('positionYValue').textContent=$('positionY').value;
+  if(!hasImage)return;
+  const size=512/Number($('zoom').value), remaining=512-size;
+  const x=remaining*Number($('positionX').value)/100, y=remaining*Number($('positionY').value)/100;
+  const ctx=source.getContext('2d');ctx.clearRect(0,0,512,512);ctx.drawImage(baseFrame,x,y,size,size,0,0,512,512);
+  processImage();
 }
 function processImage() {
   if (!hasImage) return;
@@ -62,4 +78,5 @@ $('start').addEventListener('click',startCamera);
 $('capture').addEventListener('click',()=>{try{cropSquare(video,video.videoWidth,video.videoHeight);stopCamera();status('已拍照，可检查处理结果。');}catch(e){status('拍照失败：'+e.message);}});
 $('file').addEventListener('change',async e=>{const file=e.target.files[0];if(!file)return;const url=URL.createObjectURL(file);try{const img=new Image();img.src=url;await img.decode();fitSquare(img,img.naturalWidth,img.naturalHeight);stopCamera();status('照片已等比例补成正方形，请确认字符完整。');}catch(err){status('无法读取照片：'+err.message);}finally{URL.revokeObjectURL(url);e.target.value='';}});
 $('mode').addEventListener('change',processImage); $('polarity').addEventListener('change',processImage); $('predict').addEventListener('click',predict);
+['zoom','positionX','positionY'].forEach(id=>$(id).addEventListener('input',applyFrame));$('resetFrame').addEventListener('click',resetFrame);
 (async()=>{try{if(!window.ort)throw new Error('推理库未加载');ort.env.wasm.numThreads=1;ort.env.wasm.wasmPaths=new URL('vendor/',document.baseURI).href;session=await ort.InferenceSession.create('model.onnx',{executionProviders:['wasm']});$('predict').disabled=!hasImage;status('模型已就绪。请打开摄像头或选择照片。');}catch(e){status('模型加载失败：'+e.message+'。请确认网页、模型和 vendor 文件均通过服务器提供。');}})();
