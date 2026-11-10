@@ -2,7 +2,7 @@
 const $ = id => document.getElementById(id);
 const names = ['一','二','三','四','五','六','七','八','九','十'];
 const source = $('source'), scan = $('scan'), input = $('input'), video = $('video');
-let stream = null, session = null, hasImage = false;
+let stream = null, session = null, hasImage = false, imageVersion = 0;
 const baseFrame=document.createElement('canvas'); baseFrame.width=baseFrame.height=512;
 const status = text => $('status').textContent = text;
 function stopCamera() { if (stream) stream.getTracks().forEach(t => t.stop()); stream = null; video.srcObject = null; $('capture').disabled = true; $('cameraHint').style.display = 'grid'; }
@@ -62,16 +62,17 @@ function processImage() {
   ctx.putImageData(pixels,0,0);
   const ic=input.getContext('2d'); ic.imageSmoothingEnabled=true; ic.imageSmoothingQuality='high'; ic.drawImage(scan,0,0,32,32);
   const actual=ic.getImageData(0,0,32,32); for(let i=0;i<actual.data.length;i+=4){const v=255-actual.data[i];actual.data[i]=actual.data[i+1]=actual.data[i+2]=v;actual.data[i+3]=255;} ic.putImageData(actual,0,0);
-  $('result').textContent='图像已就绪'; $('scores').textContent='';
+  imageVersion++; $('result').textContent='图像已就绪'; $('scores').textContent='';
 }
 async function predict() {
   if(!session||!hasImage) return;
-  $('predict').disabled=true;
+  $('predict').disabled=true; const version=imageVersion;
   try { const data=input.getContext('2d').getImageData(0,0,32,32).data, values=new Float32Array(1024);
     for(let i=0;i<1024;i++) values[i]=data[i*4]/255;
     const result=await session.run({image:new ort.Tensor('float32',values,[1,1,32,32])}), logits=Array.from(result.logits.data), max=Math.max(...logits);
-    const exp=logits.map(x=>Math.exp(x-max)), sum=exp.reduce((a,b)=>a+b,0), order=exp.map((v,i)=>({i,p:v/sum})).sort((a,b)=>b.p-a.p);
-    $('result').textContent='识别为：'+names[order[0].i]; $('scores').textContent='前三类模型分数：'+order.slice(0,3).map(x=>names[x.i]+' '+(x.p*100).toFixed(1)+'%').join('　'); status('识别完成。');
+    const exp=logits.map(x=>Math.exp(x-max)),sum=exp.reduce((a,b)=>a+b,0), order=exp.map((v,i)=>({i,p:v/sum})).sort((a,b)=>b.p-a.p);
+    if(version!==imageVersion){status('图片已调整，请重新点击识别。');return;}
+    $('result').textContent='识别为：'+names[order[0].i];$('scores').textContent='前三类模型分数：'+order.slice(0,3).map(x=>names[x.i]+' '+(x.p*100).toFixed(1)+'%').join('　');status('识别完成。');
   } catch(e){status('识别失败：'+e.message);} finally{$('predict').disabled=false;}
 }
 $('start').addEventListener('click',startCamera);
@@ -79,4 +80,4 @@ $('capture').addEventListener('click',()=>{try{cropSquare(video,video.videoWidth
 $('file').addEventListener('change',async e=>{const file=e.target.files[0];if(!file)return;const url=URL.createObjectURL(file);try{const img=new Image();img.src=url;await img.decode();fitSquare(img,img.naturalWidth,img.naturalHeight);stopCamera();status('照片已等比例补成正方形，请确认字符完整。');}catch(err){status('无法读取照片：'+err.message);}finally{URL.revokeObjectURL(url);e.target.value='';}});
 $('mode').addEventListener('change',processImage); $('polarity').addEventListener('change',processImage); $('predict').addEventListener('click',predict);
 ['zoom','positionX','positionY'].forEach(id=>$(id).addEventListener('input',applyFrame));$('resetFrame').addEventListener('click',resetFrame);
-(async()=>{try{if(!window.ort)throw new Error('推理库未加载');ort.env.wasm.numThreads=1;ort.env.wasm.wasmPaths=new URL('vendor/',document.baseURI).href;session=await ort.InferenceSession.create('model.onnx',{executionProviders:['wasm']});$('predict').disabled=!hasImage;status('模型已就绪。请打开摄像头或选择照片。');}catch(e){status('模型加载失败：'+e.message+'。请确认网页、模型和 vendor 文件均通过服务器提供。');}})();
+(async()=>{try{if(!window.ort)throw new Error('推理库未加载');ort.env.wasm.numThreads=1;ort.env.wasm.wasmPaths=new URL('vendor/',document.baseURI).href;session=await ort.InferenceSession.create('model-external.onnx',{executionProviders:['wasm']});$('predict').disabled=!hasImage;status('模型已就绪。请打开摄像头或选择照片。');}catch(e){status('模型加载失败：'+e.message+'。请确认网页、model-external.onnx 和 vendor 文件均已上传。');}})();
